@@ -17,8 +17,8 @@ const message = ref('');
 
 // 可選服務項目
 const serviceOptions = [
-    { id: 1, name: '標準服務 (399)', price: 399.00 },
-    { id: 2, name: '進階服務 (499)', price: 499.00 },
+    { id: 1, name: '消費金額', price: 399.00 },
+    { id: 2, name: '消費金額', price: 499.00 },
 ];
 
 // ----------------------------------------------------
@@ -27,17 +27,18 @@ const serviceOptions = [
 const handleSubmit = async () => {
     message.value = '';
 
-    // 簡單的表單驗證
-    if (!registrationForm.value.name || !registrationForm.value.phone || !registrationForm.value.operator) {
+    if (!registrationForm.value.name || !registrationForm.value.phone) {
         message.value = '⚠️ 姓名、電話和操作員姓名為必填項。';
         return;
     }
 
-    // 確認註冊
     const selectedService = serviceOptions.find(opt => opt.id === registrationForm.value.associated_product_id);
-    if (!confirm(`確定要為 ${registrationForm.value.name} 辦理 $3000 會員註冊，並關聯【${selectedService.name}】服務嗎？`)) {
-        return;
-    }
+
+    const confirmMsg = registrationForm.value.useImmediately
+        ? `確定要註冊 $3000 會員，並立即使用 1 次【${selectedService.name}】嗎？`
+        : `確定要註冊 $3000 會員，並關聯【${selectedService.name}】服務嗎？`;
+
+    if (!confirm(confirmMsg)) return;
 
     try {
         const response = await fetch(`${API_BASE_URL}/api.php?action=register_member`, {
@@ -45,17 +46,18 @@ const handleSubmit = async () => {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(registrationForm.value),
         });
+
         const data = await response.json();
 
         if (data.status === 'success') {
-            message.value = `✅ ${data.message} 已儲值 10 次額度。`;
-            // 清空表單
+            message.value = registrationForm.value.useImmediately
+                ? `✅ 會員註冊成功並已使用 1 次。剩餘 9 次。`
+                : `✅ 會員註冊成功，已儲值 10 次額度。`;
+
             registrationForm.value.name = '';
             registrationForm.value.phone = '';
-            // 成功後延遲跳轉回主控台
-            setTimeout(() => {
-                router.push('/');
-            }, 3000);
+
+            setTimeout(() => router.push('/'), 3000);
         } else {
             message.value = `❌ 註冊失敗：${data.message}`;
         }
@@ -63,6 +65,7 @@ const handleSubmit = async () => {
         message.value = '網路錯誤，註冊失敗。';
     }
 };
+
 
 // ----------------------------------------------------
 // B. 返回主控台
@@ -109,7 +112,15 @@ const goToTracker = () => {
                 <label for="operator">操作員姓名 (必填)：</label>
                 <input type="text" id="operator" v-model="registrationForm.operator" required>
             </div>
-            
+            <div class="form-group">
+    <label>
+        <input
+            type="checkbox"
+            v-model="registrationForm.useImmediately"
+        >
+        加入當下立即使用 1 次（扣 1 次額度）
+    </label>
+</div>
             <p class="summary-text">此操作將為會員收費 **$3000**，並給予 **10 次** 服務額度。</p>
 
             <button type="submit" class="btn submit-btn">

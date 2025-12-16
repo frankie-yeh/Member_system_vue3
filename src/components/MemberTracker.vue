@@ -204,11 +204,11 @@ const goToAdminDashboard = () => {
             <h2>💸 非會員單次服務 (直接收 $399/$499)</h2>
             <p>顧客不加入會員時，請點擊按鈕完成收費和記錄。</p>
             <div class="service-buttons">
-                <button @click="handleNonMemberTransaction(1, 399.00, '標準服務')" class="btn service-399">
-                    標準服務 ($399)
+                <button @click="handleNonMemberTransaction(1, 399.00, '消費金額')" class="btn service-399">
+                    消費金額 ($399)
                 </button>
-                <button @click="handleNonMemberTransaction(2, 499.00, '進階服務')" class="btn service-499">
-                    進階服務 ($499)
+                <button @click="handleNonMemberTransaction(2, 499.00, '消費金額')" class="btn service-499">
+                    消費金額 ($499)
                 </button>
             </div>
         </div>
@@ -221,7 +221,7 @@ const goToAdminDashboard = () => {
                 <input 
                     type="text" 
                     v-model="searchQuery" 
-                    placeholder="輸入會員姓名或電話"
+                    placeholder="輸入會員電話"
                     @keyup.enter="searchMember"
                 >
                 <button @click="searchMember" class="btn search-btn">查詢會員資料</button>

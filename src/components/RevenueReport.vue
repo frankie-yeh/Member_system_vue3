@@ -1,70 +1,123 @@
 <script setup>
-import { ref } from 'vue';
-import { useRouter } from 'vue-router';
+import { ref, computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 
-const API_BASE_URL = 'https://yamay.com.tw/app'; 
+const API_BASE_URL = 'https://yamay.com.tw/app'
+const router = useRouter()
 
-const router = useRouter();
+/* =========================
+   狀態
+========================= */
+const queryType = ref('day')
+const queryDate = ref(new Date().toISOString().substring(0, 10))
+const loading = ref(false)
+const message = ref('')
 
-// 狀態管理
-const queryType = ref('day'); // 預設查詢模式：日(day) 或 月(month)
-const queryDate = ref(new Date().toISOString().substring(0, 10)); // 預設為當前日期 (YYYY-MM-DD)
-const reportData = ref(null);
-const message = ref('');
-const loading = ref(false);
+const reportData = ref(null)
+const visitorStats = ref({
+    member_count: 0,
+    non_member_count: 0,
+    new_member_count: 0,
+    total_visitors: 0,
+})
 
-// ----------------------------------------------------
-// A. 處理營收查詢
-// ----------------------------------------------------
-const fetchRevenue = async () => {
-    message.value = '';
-    reportData.value = null;
-    loading.value = true;
+/* =========================
+   計算屬性
+========================= */
+const isDailyReport = computed(() => queryType.value === 'day')
+
+/* =========================
+   工具
+========================= */
+const formatCurrency = (amount) => {
+    const value = Number(amount ?? 0)
+    return `NT$ ${value.toLocaleString('zh-TW', { minimumFractionDigits: 2 })}`
+}
+
+/* =========================
+   主查詢（唯一入口）
+========================= */
+const fetchReport = async () => {
+    loading.value = true
+    message.value = ''
+    reportData.value = null
+    visitorStats.value = {
+        member_count: 0,
+        non_member_count: 0,
+        new_member_count: 0,
+        total_visitors: 0,
+    }
 
     if (!queryDate.value) {
-        message.value = '⚠️ 請選擇查詢日期。';
-        loading.value = false;
-        return;
+        message.value = '⚠️ 請選擇查詢日期'
+        loading.value = false
+        return
     }
 
-    // 根據查詢模式決定 API action
-    const action = queryType.value === 'month' ? 'get_monthly_revenue' : 'get_daily_revenue';
-    
-    // 如果是月查詢，只需要年月部分
-    const dateParam = queryType.value === 'month' ? queryDate.value.substring(0, 7) : queryDate.value;
+    const isDaily = queryType.value === 'day'
+    const action = isDaily ? 'get_daily_revenue' : 'get_monthly_revenue'
+    const dateParam = isDaily ? queryDate.value : queryDate.value.substring(0, 7)
 
     try {
-        const response = await fetch(`${API_BASE_URL}/api.php?action=${action}&date=${dateParam}`);
-        const data = await response.json();
+        const res = await fetch(
+            `${API_BASE_URL}/api.php?action=${action}&date=${dateParam}`
+        )
 
-        if (data.status === 'success') {
-            reportData.value = data.data;
-            message.value = `✅ ${reportData.value.period} 的營收數據載入成功。`;
-        } else {
-            message.value = `❌ 查詢失敗: ${data.message}`;
+        if (!res.ok) {
+            message.value = `❌ API 錯誤 (${res.status})`
+            return
         }
-    } catch (error) {
-        message.value = '網路錯誤，營收查詢失敗。';
+
+        const data = await res.json()
+        console.log('API 回傳：', data)
+
+        if (data.status !== 'success' || !data.data) {
+            message.value = `❌ 查詢失敗：${data.message || '未知錯誤'}`
+            return
+        }
+
+        // ✅ 寫入唯一狀態
+        reportData.value = data.data
+        visitorStats.value = data.data.visitor_stats ?? visitorStats.value
+
+        message.value = `✅ ${data.data.period ?? dateParam} 的報表載入成功`
+    } catch (err) {
+        console.error(err)
+        message.value = '❌ 網路錯誤，無法連線 API'
     } finally {
-        loading.value = false;
+        loading.value = false
     }
-};
+}
 
-// ----------------------------------------------------
-// B. 輔助函數
-// ----------------------------------------------------
-const formatCurrency = (amount) => {
-    // 格式化為台幣 NT$ 符號
-    return `NT$ ${parseFloat(amount).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}`;
-};
+/* =========================
+   導航 / 登出
+========================= */
+const goToDashboard = () => router.push('/admin')
 
-// ----------------------------------------------------
-// C. 導航
-// ----------------------------------------------------
-const goToDashboard = () => {
-    router.push('/admin');
-};
+const handleLogout = async () => {
+    const token = localStorage.getItem('admin_token')
+    localStorage.removeItem('admin_token')
+
+    if (token) {
+        try {
+            await fetch(`${API_BASE_URL}/api.php?action=admin_logout`, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${token}` },
+            })
+        } catch (err) {
+            console.warn('Logout API failed:', err)
+        }
+    }
+
+    router.push('/')
+}
+
+/* =========================
+   初始化
+========================= */
+onMounted(fetchReport)
 </script>
+
 
 <template>
     <div class="revenue-report-container card">
@@ -73,6 +126,9 @@ const goToDashboard = () => {
         <div class="header-controls">
             <button @click="goToDashboard" class="btn back-btn">
                 🔙 返回後台總覽
+            </button>
+            <button @click="handleLogout" class="logout-btn-fixed">
+                登出管理員帳號
             </button>
         </div>
         
@@ -99,7 +155,7 @@ const goToDashboard = () => {
                 >
             </div>
 
-            <button @click="fetchRevenue" :disabled="loading" class="btn query-btn">
+            <button @click="fetchReport" :disabled="loading" class="btn query-btn">
                 {{ loading ? '查詢中...' : '執行營收查詢' }}
             </button>
         </div>
@@ -133,6 +189,29 @@ const goToDashboard = () => {
             <p>請選擇日期和模式，執行查詢以生成報表。</p>
         </div>
     </div>
+    <div class="section visitor-stats-summary">
+        <h2>👥 來客數分析 ({{ isDailyReport ? '當日' : '當月' }})</h2>
+        <div class="stats-grid">
+            <div class="stat-card">
+                <h3>會員來客數</h3>
+                <p class="count member-count">{{ visitorStats.member_count }} 位</p>
+            </div>
+            <div class="stat-card">
+                <h3>非會員來客數</h3>
+                <p class="count non-member-count">{{ visitorStats.non_member_count }} 位</p>
+            </div>
+            <div class="stat-card primary">
+                <h3>總來客數 (總人流)</h3>
+                <p class="count total-count">{{ visitorStats.total_visitors }} 位</p>
+            </div>
+            <div class="stat-card new">
+                <h3>新加入會員</h3>
+                <p class="count new-count">{{ visitorStats.new_member_count }} 位</p>
+            </div>
+        </div>
+    </div>
+    
+    <hr>
 </template>
 
 <style scoped>
@@ -227,5 +306,63 @@ h1 { color: #333; border-bottom: 2px solid #eee; padding-bottom: 10px; margin-bo
     border: 1px dashed #ccc;
     border-radius: 8px;
     margin-top: 20px;
+}
+.header-controls {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 0;
+    margin-bottom: 20px;
+}
+.logout-btn-fixed {
+    background-color: #dc3545; /* 紅色 */
+    color: white;
+    border: none;
+    padding: 8px 15px;
+    border-radius: 5px;
+    cursor: pointer;
+}
+/* 人數統計網格佈局 */
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr); /* 四個欄位 */
+    gap: 20px;
+    margin-bottom: 30px;
+}
+
+.stat-card {
+    background: #f8f9fa;
+    border-radius: 8px;
+    padding: 15px;
+    text-align: center;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.stat-card h3 {
+    font-size: 1em;
+    color: #666;
+    margin-bottom: 5px;
+}
+
+.stat-card .count {
+    font-size: 1.8em;
+    font-weight: 700;
+    margin: 0;
+}
+
+/* 突顯總數和新增數 */
+.stat-card.primary {
+    background-color: #007bff;
+    color: white;
+}
+.stat-card.primary h3 {
+    color: white;
+}
+.stat-card.new {
+    background-color: #28a745;
+    color: white;
+}
+.stat-card.new h3 {
+    color: white;
 }
 </style>

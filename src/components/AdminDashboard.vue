@@ -6,6 +6,35 @@ const API_BASE_URL = 'https://yamay.com.tw/app';
 
 const router = useRouter();
 
+const goMembersByDate = () => {
+    router.push({ name: 'MembersByDate' })
+}
+
+const handleLogout = async () => {
+    const token = localStorage.getItem('admin_token');
+    localStorage.removeItem('admin_token'); // 立即清除本地權杖
+
+    if (token) {
+        // 可選：呼叫後端 API 銷毀權杖（更安全）
+        try {
+            const API_BASE_URL = '/app'; 
+            await fetch(`${API_BASE_URL}/api.php?action=admin_logout`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${token}` // 傳送要銷毀的權杖
+                }
+            });
+            // 伺服器端錯誤通常不影響登出流程，所以我們不處理回應
+        } catch (e) {
+            console.error('Logout API call failed, but local token cleared.', e);
+        }
+    }
+    
+    // 導航到員工可存取的首頁 (例如總控台)
+    router.push('/');
+};
+
+
 // 狀態管理
 const members = ref([]);
 const transactions = ref([]);
@@ -16,9 +45,28 @@ const error = ref('');
 // A. 獲取所有會員列表
 // ----------------------------------------------------
 const fetchAllMembers = async () => {
+    const token = localStorage.getItem('admin_token');
+    const headers = {
+        'Authorization': `Bearer ${token}`, 
+        'Content-Type': 'application/json',
+    };
+    if (!token) {
+        console.error("Token is missing. Access denied.");
+        loading.value = false;
+        error.value = '請先登入管理員帳號。';
+        return; 
+    }
+
     try {
+        loading.value = true;
         const currentTime = new Date().getTime();
-        const response = await fetch(`${API_BASE_URL}/api.php?action=get_all_members&_t=${currentTime}`);
+        const response = await fetch(`${API_BASE_URL}/api.php?action=get_all_members&_t=${currentTime}`, { headers: headers });
+        if (response.status === 401) {
+            console.error("API access denied. Token invalid or expired.");
+            localStorage.removeItem('admin_token');
+            error.value = '管理員權杖無效或已過期，請重新登入。';
+            return;
+        }
         const data = await response.json();
         
         if (data.status === 'success') {
@@ -35,9 +83,33 @@ const fetchAllMembers = async () => {
 // B. 獲取所有交易記錄
 // ----------------------------------------------------
 const fetchAllTransactions = async () => {
+    const token = localStorage.getItem('admin_token');
+    const headers = {
+        'Authorization': `Bearer ${token}`, 
+        'Content-Type': 'application/json',
+    };
+    
+    if (!token) {
+        console.error("Token is missing. Access denied.");
+        loading.value = false;
+        error.value = '請先登入管理員帳號。';
+        return; 
+    }
+    
     try {
-        const currentTime = new Date().getTime();
-        const response = await fetch(`${API_BASE_URL}/api.php?action=get_all_transactions&_t=${currentTime}`);
+        loading.value = true;
+        const currentTime = new Date().getTime(); 
+        const response = await fetch(`${API_BASE_URL}/api.php?action=get_all_transactions&_t=${currentTime}`, {
+            headers: headers 
+        });
+        
+        if (response.status === 401) {
+            console.error("API access denied. Token invalid or expired.");
+            localStorage.removeItem('admin_token');
+            error.value = '管理員權杖無效或已過期，請重新登入。';
+            return;
+        }
+
         const data = await response.json();
         
         if (data.status === 'success') {
@@ -104,8 +176,14 @@ onMounted(() => {
             <button @click="goToRevenueReport" class="btn report-btn">
                 📈 營收報表查詢
             </button>
+            <button class="btn btn-primary" @click="goMembersByDate">
+                📅 依日期查會員
+            </button>
             <button @click="goToTracker" class="btn back-btn">
                 🏠 返回服務總控台
+            </button>
+            <button @click="handleLogout" class="logout-btn">
+                登出管理員帳號
             </button>
         </div>
 
@@ -255,4 +333,33 @@ tbody tr:hover { background-color: #f1f1f1; }
     margin-top: 20px;
 }
 .error-state p { color: #dc3545; font-weight: bold; }
+.dashboard-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 0;
+    margin-bottom: 20px;
+}
+.logout-btn {
+    background-color: #dc3545; 
+    color: white;
+    border: none;
+    padding: 8px 15px;
+    border-radius: 5px;
+    cursor: pointer;
+}
+.admin-card {
+    cursor: pointer;
+    padding: 20px;
+    border-radius: 10px;
+    background: #e9ecef;
+    transition: 0.2s;
+}
+.btn-primary{
+    background-color:#0f770f;
+}
+.admin-card:hover {
+    background: #e9ecef;
+}
+
 </style>
