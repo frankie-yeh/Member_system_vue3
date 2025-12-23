@@ -25,7 +25,6 @@ function validateTokenAndExit($pdo) {
         $token = $m[1];
     }
 
-    // 2️⃣ 再吃 GET / POST token（給 CSV / window.open 用）
     if (!$token) {
         $token = $_POST['token'] ?? $_GET['token'] ?? '';
     }
@@ -136,8 +135,6 @@ function handleRegisterMember($pdo) {
 
         // 1) 寫入 members（先給 10 次）
         $note = $data['note'] ?? null;
-
-        // ✅ 修正：欄位數/參數數量正確，且 associated_product_id 正確帶入
         $sql_member = "
             INSERT INTO members (name, phone, note, associated_product_id, remaining_quota, join_date) 
             VALUES (?, ?, ?, ?, 10, NOW())
@@ -156,7 +153,6 @@ function handleRegisterMember($pdo) {
 
         // 3) 如果「加入當下就要用 1 次」
         if ($use_immediately) {
-            // 3-1 扣次（10 -> 9）
             $sql_update_quota = "
                 UPDATE members 
                 SET remaining_quota = remaining_quota - 1 
@@ -204,7 +200,6 @@ function handleSearchMember($pdo) {
         return;
     }
 
-    // ① 先用「電話」精準查
     $stmt = $pdo->prepare("
         SELECT 
             m.id,
@@ -223,7 +218,6 @@ function handleSearchMember($pdo) {
     $stmt->execute(['phone' => $query]);
     $row = $stmt->fetch(PDO::FETCH_ASSOC);
 
-    // ② 如果電話找不到，才用 name LIKE
     if (!$row) {
         $stmt = $pdo->prepare("
             SELECT 
@@ -368,13 +362,12 @@ function handleRenewMember($pdo) {
 ============================================================ */
 function handleGetRevenue($pdo, $type) {
 
-    // ✅ 一定要先拿 date
     $date = $_GET['date'] ?? date('Y-m-d');
 
     $isDaily = ($type === 'day');
     $period  = $isDaily ? $date : substr($date, 0, 7);
 
-    // ✅ 明確定義時間區間（台北）
+    // 明確定義時間區間（台北）
     if ($isDaily) {
         $start = $date . ' 00:00:00';
         $end   = $date . ' 23:59:59';
@@ -471,7 +464,7 @@ function handleGetRevenue($pdo, $type) {
                     'new_member_count' => $new_member_count,
                     'total_visitors' => $total_visitors
                 ],
-                // 🔍 debug 用（可之後移除）
+                // debug 用（可之後移除）
                 'debug_range' => [
                     'start' => $start,
                     'end'   => $end
@@ -590,7 +583,6 @@ function handleAdminLogout($pdo) {
 ============================================================ */
 function handleGetMembersByJoinDate($pdo) {
 
-    // 允許 date 或 month 二選一
     $date  = $_GET['date']  ?? null; // YYYY-MM-DD
     $month = $_GET['month'] ?? null; // YYYY-MM
 
@@ -676,7 +668,6 @@ function handleExportMembersCSV($pdo) {
         exit;
     }
 
-    // ✅ 修正：匯出欄位順序要和 header 一致，避免 note 亂欄
     $stmt = $pdo->prepare("
         SELECT 
             m.name,
@@ -692,18 +683,16 @@ function handleExportMembersCSV($pdo) {
     $stmt->execute([$date]);
     $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-    // CSV Header（含 BOM，避免 Excel 亂碼）
+
     header('Content-Type: text/csv; charset=UTF-8');
     header('Content-Disposition: attachment; filename="members_' . $date . '.csv"');
     echo "\xEF\xBB\xBF";
 
     $out = fopen('php://output', 'w');
 
-    // ✅ 修正：header 改成跟 SELECT / 匯入一致（name, phone, note, remaining_quota, associated_product_id, join_date）
     fputcsv($out, ['name', 'phone', 'note', 'remaining_quota', 'associated_product_id', 'join_date']);
 
     foreach ($rows as $row) {
-        // ✅ 明確依照 header 順序輸出（避免 assoc 順序不一致）
         fputcsv($out, [
             $row['name'] ?? '',
             $row['phone'] ?? '',
@@ -746,9 +735,8 @@ function handleImportMembersCSV($pdo) {
         return;
     }
 
-    // 關鍵修正：清 BOM + 去空白（一定要全部欄位）
     $header = array_map(function ($h) {
-        $h = preg_replace('/^\xEF\xBB\xBF/', '', $h); // 去 BOM
+        $h = preg_replace('/^\xEF\xBB\xBF/', '', $h); 
         return trim($h);
     }, $header);
 
@@ -766,8 +754,6 @@ function handleImportMembersCSV($pdo) {
         ========================================================= */
         while (($row = fgetcsv($handle)) !== false) {
             $rowIndex++;
-
-            // 欄位數不符直接略過
             if (count($row) !== count($header)) {
                 $errors[] = [
                     'row' => $rowIndex,
@@ -784,7 +770,6 @@ function handleImportMembersCSV($pdo) {
                 FILE_APPEND
             );
 
-            // phone 為唯一鍵，必須存在
             if (empty($data['phone'])) {
                 $errors[] = [
                     'row' => $rowIndex,
@@ -801,7 +786,7 @@ function handleImportMembersCSV($pdo) {
             $memberId = $stmt->fetchColumn();
 
             if ($memberId) {
-                // 🔁 UPDATE
+                // UPDATE
                 $pdo->prepare("
                     UPDATE members SET
                         name = ?,
@@ -821,8 +806,7 @@ function handleImportMembersCSV($pdo) {
                 $updated++;
 
             } else {
-                // ➕ INSERT
-                // ✅ 修正：6 欄位就要 6 個 ?
+                //  INSERT
                 $pdo->prepare("
                     INSERT INTO members
                         (name, phone, note, remaining_quota, associated_product_id, join_date)
@@ -884,7 +868,7 @@ function handleUpdateMemberBasic($pdo) {
     $phone    = trim($data['phone']);
 
     try {
-        // 🔒 檢查電話是否被其他會員使用
+        // 檢查電話是否被其他會員使用
         $stmt = $pdo->prepare("
             SELECT id 
             FROM members 
@@ -900,7 +884,7 @@ function handleUpdateMemberBasic($pdo) {
             return;
         }
 
-        // ✅ 更新會員基本資料
+        //  更新會員基本資料
         $stmt = $pdo->prepare("
             UPDATE members
             SET name = ?, phone = ?
@@ -927,12 +911,10 @@ function handleUpdateMemberBasic($pdo) {
 ============================================================ */
 function handleAdminUpdateMemberFull($pdo) {
 
-    // ✅ 管理員驗證
+    //  管理員驗證
     validateTokenAndExit($pdo);
 
     $data = json_decode(file_get_contents('php://input'), true);
-
-    // ✅ 你目前 required 沒有 note，這沒問題（可選）
     $required = ['member_id','name','phone','remaining_quota','associated_product_id','join_date'];
     foreach ($required as $key) {
         if (!isset($data[$key])) {
@@ -950,11 +932,11 @@ function handleAdminUpdateMemberFull($pdo) {
     $phone      = trim($data['phone']);
     $quota      = (int)$data['remaining_quota'];
     $productId  = (int)$data['associated_product_id'];
-    $joinDate   = $data['join_date']; // YYYY-MM-DD or datetime
+    $joinDate   = $data['join_date'];
     $note       = $data['note'] ?? null; 
 
     try {
-        // 🔒 電話唯一性檢查
+        //  電話唯一性檢查
         $stmt = $pdo->prepare("
             SELECT id FROM members
             WHERE phone = ? AND id != ?
@@ -969,7 +951,7 @@ function handleAdminUpdateMemberFull($pdo) {
             return;
         }
 
-        // ✅ 更新會員（含 note）
+        //  更新會員
         $stmt = $pdo->prepare("
             UPDATE members SET
                 name = ?,
@@ -1005,3 +987,4 @@ function handleAdminUpdateMemberFull($pdo) {
 }
 
 ?>
+
