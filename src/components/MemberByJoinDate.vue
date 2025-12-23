@@ -11,7 +11,7 @@ const router = useRouter()
 /* =========================
    狀態
 ========================= */
-const queryMode = ref('day') // day | month
+const queryMode = ref('day') 
 const queryDate = ref(new Date().toISOString().substring(0, 10))
 const members = ref([])
 const loading = ref(false)
@@ -406,3 +406,4 @@ background-color: darkgreen;
     text-align: center;
 }
 </style>
+
