@@ -189,7 +189,7 @@ onMounted(fetchReport)
             <p>請選擇日期和模式，執行查詢以生成報表。</p>
         </div>
     </div>
-    <div class="section visitor-stats-summary">
+    <div class="revenue-report-container card">
         <h2>👥 來客數分析 ({{ isDailyReport ? '當日' : '當月' }})</h2>
         <div class="stats-grid">
             <div class="stat-card">
@@ -365,4 +365,5 @@ h1 { color: #333; border-bottom: 2px solid #eee; padding-bottom: 10px; margin-bo
 .stat-card.new h3 {
     color: white;
 }
+
 </style>
