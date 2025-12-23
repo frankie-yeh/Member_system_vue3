@@ -1,6 +1,9 @@
 <?php
+opcache_reset();
 date_default_timezone_set('Asia/Taipei');
 
+header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+header('Pragma: no-cache');
 header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
 header('Access-Control-Allow-Headers: Content-Type, Authorization');
@@ -90,8 +93,8 @@ switch ($action) {
     case 'admin_logout':          handleAdminLogout($pdo); break;
     case 'export_members_csv':    handleExportMembersCSV($pdo); break;
     case 'import_members_csv':    handleImportMembersCSV($pdo); break;
-
-
+    case 'update_member_basic':   handleUpdateMemberBasic($pdo); break;
+    case 'admin_update_member_full': handleAdminUpdateMemberFull($pdo); break;
 
     default:
         echo json_encode(['status'=>'error','message'=>'無效 action']);
@@ -132,12 +135,15 @@ function handleRegisterMember($pdo) {
         }
 
         // 1) 寫入 members（先給 10 次）
+        $note = $data['note'] ?? null;
+
+        // ✅ 修正：欄位數/參數數量正確，且 associated_product_id 正確帶入
         $sql_member = "
-            INSERT INTO members (name, phone, associated_product_id, remaining_quota, join_date) 
-            VALUES (?, ?, ?, 10, NOW())
+            INSERT INTO members (name, phone, note, associated_product_id, remaining_quota, join_date) 
+            VALUES (?, ?, ?, ?, 10, NOW())
         ";
         $stmt_member = $pdo->prepare($sql_member);
-        $stmt_member->execute([$name, $phone, $product_id]);
+        $stmt_member->execute([$name, $phone, $note, $product_id]);
         $member_id = (int)$pdo->lastInsertId();
 
         // 2) 寫入 member_fees（收 3000，付款日 = NOW）
@@ -190,19 +196,62 @@ function handleRegisterMember($pdo) {
    B. 查詢會員
 ============================================================ */
 function handleSearchMember($pdo) {
-    $query = $_GET['query'] ?? '';
 
+    $query = trim($_GET['query'] ?? '');
+
+    if ($query === '') {
+        echo json_encode(['status'=>'error','message'=>'query empty']);
+        return;
+    }
+
+    // ① 先用「電話」精準查
     $stmt = $pdo->prepare("
-        SELECT m.*, p.name AS service_name
+        SELECT 
+            m.id,
+            m.name,
+            m.phone,
+            m.note,
+            m.remaining_quota,
+            m.associated_product_id,
+            m.join_date,
+            p.name AS service_name
         FROM members m
         JOIN products p ON m.associated_product_id = p.id
-        WHERE m.phone = :q OR m.name LIKE :l
+        WHERE m.phone = :phone
         LIMIT 1
     ");
-    $stmt->execute(['q'=>$query,'l'=>"%$query%"]);
+    $stmt->execute(['phone' => $query]);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
 
-    echo json_encode(['status'=>'success','data'=>$stmt->fetch()]);
+    // ② 如果電話找不到，才用 name LIKE
+    if (!$row) {
+        $stmt = $pdo->prepare("
+            SELECT 
+                m.id,
+                m.name,
+                m.phone,
+                m.note,
+                m.remaining_quota,
+                m.associated_product_id,
+                m.join_date,
+                p.name AS service_name
+            FROM members m
+            JOIN products p ON m.associated_product_id = p.id
+            WHERE m.name LIKE :name
+            ORDER BY m.join_date DESC
+            LIMIT 1
+        ");
+        $stmt->execute(['name' => "%{$query}%"]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    }
+
+    echo json_encode([
+        'status' => 'success',
+        'data' => $row
+    ]);
 }
+
+
 
 /* ============================================================
    C. 記錄交易（單次消費 + 會員扣次）
@@ -439,8 +488,6 @@ function handleGetRevenue($pdo, $type) {
     }
 }
 
-
-
 /* ============================================================
    F. 所有會員資料
 ============================================================ */
@@ -452,6 +499,7 @@ function handleGetAllMembers($pdo) {
         FROM members m
         JOIN products p ON m.associated_product_id = p.id
         ORDER BY join_date DESC
+        Limit 50
     ";
 
     echo json_encode([
@@ -472,6 +520,7 @@ function handleGetAllTransactions($pdo) {
         JOIN products p ON t.product_id = p.id
         LEFT JOIN members m ON t.member_id = m.id
         ORDER BY transaction_date DESC
+        Limit 50
     ";
 
     echo json_encode([
@@ -563,7 +612,9 @@ function handleGetMembersByJoinDate($pdo) {
                     m.id,
                     m.name,
                     m.phone,
+                    m.note,
                     m.remaining_quota,
+                    m.associated_product_id,
                     m.join_date,
                     p.name AS service_name
                 FROM members m
@@ -581,7 +632,9 @@ function handleGetMembersByJoinDate($pdo) {
                     m.id,
                     m.name,
                     m.phone,
+                    m.note,
                     m.remaining_quota,
+                    m.associated_product_id,
                     m.join_date,
                     p.name AS service_name
                 FROM members m
@@ -623,10 +676,12 @@ function handleExportMembersCSV($pdo) {
         exit;
     }
 
+    // ✅ 修正：匯出欄位順序要和 header 一致，避免 note 亂欄
     $stmt = $pdo->prepare("
         SELECT 
             m.name,
             m.phone,
+            m.note,
             m.remaining_quota,
             m.associated_product_id,
             m.join_date
@@ -644,16 +699,25 @@ function handleExportMembersCSV($pdo) {
 
     $out = fopen('php://output', 'w');
 
-    // 欄位標題
-    fputcsv($out, ['name', 'phone', 'remaining_quota', 'associated_product_id', 'join_date']);
+    // ✅ 修正：header 改成跟 SELECT / 匯入一致（name, phone, note, remaining_quota, associated_product_id, join_date）
+    fputcsv($out, ['name', 'phone', 'note', 'remaining_quota', 'associated_product_id', 'join_date']);
 
     foreach ($rows as $row) {
-        fputcsv($out, $row);
+        // ✅ 明確依照 header 順序輸出（避免 assoc 順序不一致）
+        fputcsv($out, [
+            $row['name'] ?? '',
+            $row['phone'] ?? '',
+            $row['note'] ?? '',
+            $row['remaining_quota'] ?? 0,
+            $row['associated_product_id'] ?? 1,
+            $row['join_date'] ?? ''
+        ]);
     }
 
     fclose($out);
     exit;
 }
+
 /* ============================================================
     M. 匯入會員 CSV
  ============================================================*/
@@ -682,7 +746,7 @@ function handleImportMembersCSV($pdo) {
         return;
     }
 
-    // 🔥 關鍵修正：清 BOM + 去空白（一定要全部欄位）
+    // 關鍵修正：清 BOM + 去空白（一定要全部欄位）
     $header = array_map(function ($h) {
         $h = preg_replace('/^\xEF\xBB\xBF/', '', $h); // 去 BOM
         return trim($h);
@@ -713,11 +777,12 @@ function handleImportMembersCSV($pdo) {
             }
 
             $data = array_combine($header, $row);
+
             file_put_contents(
-    __DIR__ . '/csv_debug.log',
-    print_r($data, true),
-    FILE_APPEND
-);
+                __DIR__ . '/csv_debug.log',
+                print_r($data, true),
+                FILE_APPEND
+            );
 
             // phone 為唯一鍵，必須存在
             if (empty($data['phone'])) {
@@ -740,12 +805,14 @@ function handleImportMembersCSV($pdo) {
                 $pdo->prepare("
                     UPDATE members SET
                         name = ?,
+                        note = ?,
                         remaining_quota = ?,
                         associated_product_id = ?,
                         join_date = ?
                     WHERE phone = ?
                 ")->execute([
                     $data['name'] ?? '',
+                    $data['note'] ?? null,
                     (int)($data['remaining_quota'] ?? 0),
                     (int)($data['associated_product_id'] ?? 1),
                     $data['join_date'] ?? date('Y-m-d'),
@@ -755,13 +822,15 @@ function handleImportMembersCSV($pdo) {
 
             } else {
                 // ➕ INSERT
+                // ✅ 修正：6 欄位就要 6 個 ?
                 $pdo->prepare("
                     INSERT INTO members
-                        (name, phone, remaining_quota, associated_product_id, join_date)
-                    VALUES (?,?,?,?,?)
+                        (name, phone, note, remaining_quota, associated_product_id, join_date)
+                    VALUES (?,?,?,?,?,?)
                 ")->execute([
                     $data['name'] ?? '',
                     $data['phone'],
+                    $data['note'] ?? null,
                     (int)($data['remaining_quota'] ?? 0),
                     (int)($data['associated_product_id'] ?? 1),
                     $data['join_date'] ?? date('Y-m-d')
@@ -789,5 +858,150 @@ function handleImportMembersCSV($pdo) {
     }
 }
 
+/* ============================================================
+   N. 更新會員基本資料（姓名 / 電話）【總控台用】
+   不需 admin token，只限基本欄位
+============================================================ */
+function handleUpdateMemberBasic($pdo) {
+
+    $data = json_decode(file_get_contents('php://input'), true);
+
+    if (
+        empty($data['member_id']) ||
+        empty($data['name']) ||
+        empty($data['phone'])
+    ) {
+        http_response_code(400);
+        echo json_encode([
+            'status' => 'error',
+            'message' => '缺少必要欄位'
+        ]);
+        return;
+    }
+
+    $memberId = (int)$data['member_id'];
+    $name     = trim($data['name']);
+    $phone    = trim($data['phone']);
+
+    try {
+        // 🔒 檢查電話是否被其他會員使用
+        $stmt = $pdo->prepare("
+            SELECT id 
+            FROM members 
+            WHERE phone = ? AND id != ?
+        ");
+        $stmt->execute([$phone, $memberId]);
+
+        if ($stmt->fetch()) {
+            echo json_encode([
+                'status' => 'error',
+                'message' => '此電話號碼已被其他會員使用'
+            ]);
+            return;
+        }
+
+        // ✅ 更新會員基本資料
+        $stmt = $pdo->prepare("
+            UPDATE members
+            SET name = ?, phone = ?
+            WHERE id = ?
+        ");
+        $stmt->execute([$name, $phone, $memberId]);
+
+        echo json_encode([
+            'status' => 'success',
+            'message' => '會員基本資料已更新'
+        ]);
+
+    } catch (Exception $e) {
+        http_response_code(500);
+        echo json_encode([
+            'status' => 'error',
+            'message' => '更新失敗：' . $e->getMessage()
+        ]);
+    }
+}
+
+/* ============================================================
+   O. 管理員更新會員完整資料（後台用）
+============================================================ */
+function handleAdminUpdateMemberFull($pdo) {
+
+    // ✅ 管理員驗證
+    validateTokenAndExit($pdo);
+
+    $data = json_decode(file_get_contents('php://input'), true);
+
+    // ✅ 你目前 required 沒有 note，這沒問題（可選）
+    $required = ['member_id','name','phone','remaining_quota','associated_product_id','join_date'];
+    foreach ($required as $key) {
+        if (!isset($data[$key])) {
+            http_response_code(400);
+            echo json_encode([
+                'status' => 'error',
+                'message' => "缺少欄位：{$key}"
+            ]);
+            return;
+        }
+    }
+
+    $memberId   = (int)$data['member_id'];
+    $name       = trim($data['name']);
+    $phone      = trim($data['phone']);
+    $quota      = (int)$data['remaining_quota'];
+    $productId  = (int)$data['associated_product_id'];
+    $joinDate   = $data['join_date']; // YYYY-MM-DD or datetime
+    $note       = $data['note'] ?? null; 
+
+    try {
+        // 🔒 電話唯一性檢查
+        $stmt = $pdo->prepare("
+            SELECT id FROM members
+            WHERE phone = ? AND id != ?
+        ");
+        $stmt->execute([$phone, $memberId]);
+
+        if ($stmt->fetch()) {
+            echo json_encode([
+                'status' => 'error',
+                'message' => '此電話已被其他會員使用'
+            ]);
+            return;
+        }
+
+        // ✅ 更新會員（含 note）
+        $stmt = $pdo->prepare("
+            UPDATE members SET
+                name = ?,
+                phone = ?,
+                note = ?,
+                remaining_quota = ?,
+                associated_product_id = ?,
+                join_date = ?
+            WHERE id = ?
+        ");
+        $stmt->execute([
+            $name,
+            $phone,
+            $data['note'] ?? null,
+            $quota,
+            $productId,
+            $joinDate,
+            $memberId
+        ]);
+
+        echo json_encode([
+            'status' => 'success',
+            'message' => '會員資料已更新'
+        ]);
+
+    } catch (Exception $e) {
+        http_response_code(500);
+        echo json_encode([
+            'status' => 'error',
+            'message' => '更新失敗：' . $e->getMessage()
+        ]);
+    }
+}
 
 ?>

@@ -10,6 +10,7 @@ const router = useRouter();
 const registrationForm = ref({
     name: '',
     phone: '',
+    note: '',
     associated_product_id: 1, // 預設為 1 (標準服務 399)
     operator: 'Admin', // 預設操作員
 });
@@ -56,6 +57,7 @@ const handleSubmit = async () => {
 
             registrationForm.value.name = '';
             registrationForm.value.phone = '';
+            registrationForm.value.note = '';
 
             setTimeout(() => router.push('/'), 3000);
         } else {
@@ -107,7 +109,10 @@ const goToTracker = () => {
                     </label>
                 </div>
             </div>
-
+            <div class="form-group">
+                <label for="note">備註：</label>
+                    <textarea type="note" id="note" v-model="registrationForm.note" rows="2" placeholder="例如：體驗券、朋友介紹、特殊狀況"></textarea>
+            </div>
             <div class="form-group">
                 <label for="operator">操作員姓名 (必填)：</label>
                 <input type="text" id="operator" v-model="registrationForm.operator" required>
@@ -154,6 +159,14 @@ h1 { color: #333; border-bottom: 2px solid #eee; padding-bottom: 10px; margin-bo
 .form-group label { display: block; margin-bottom: 8px; font-weight: bold; color: #555; }
 .form-group input[type="text"],
 .form-group input[type="tel"] {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    box-sizing: border-box;
+    font-size: 1em;
+}
+.form-group textarea{
     width: 100%;
     padding: 10px;
     border: 1px solid #ccc;

@@ -12,6 +12,12 @@ const searchResult = ref(null);
 const message = ref('');
 const operator = ref('Admin'); 
 
+// ✅ 新增：會員資料編輯用（只限姓名 / 電話）
+const isEditingMember = ref(false);
+const editName = ref('');
+const editPhone = ref('');
+const editNote = ref('');
+
 // ----------------------------------------------------
 // A. 非會員單次消費 (直接收費並記錄)
 // ----------------------------------------------------
@@ -35,7 +41,6 @@ const handleNonMemberTransaction = async (productId, price, serviceName) => {
     };
 
     try {
-        // 🚀 修正 2: 修正 fetch 呼叫路徑
         const response = await fetch(`${API_BASE_URL}/api.php?action=record_transaction`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -62,6 +67,11 @@ const searchMember = async () => {
     message.value = '';
     searchResult.value = null; // 清空上次結果
 
+    // ✅ 查詢前先關掉編輯模式
+    isEditingMember.value = false;
+    editName.value = '';
+    editPhone.value = '';
+
     if (!searchQuery.value) {
         message.value = '⚠️ 請輸入會員姓名或電話進行查詢。';
         return;
@@ -69,12 +79,17 @@ const searchMember = async () => {
 
     try {
         const encodedQuery = encodeURIComponent(searchQuery.value);
-        // 🚀 修正 3: 修正 searchMember 的 API 呼叫路徑
-        const response = await fetch(`${API_BASE_URL}/api.php?action=search_member&query=${encodedQuery}`);
+        const response = await fetch(`${API_BASE_URL}/api.php?action=search_member&query=${encodedQuery}&_=${Date.now()}`);
         const data = await response.json();
 
         if (data.data) {
             searchResult.value = data.data;
+
+            // ✅ 新增：把姓名/電話帶入編輯欄位（只做前端）
+            editName.value = data.data.name || '';
+            editPhone.value = data.data.phone || '';
+            editNote.value = data.data.note  || '';
+
             message.value = `🟢 找到會員：${data.data.name}。剩餘 ${data.data.remaining_quota} 次。`;
         } else {
             message.value = `🟡 查無此會員。請引導客戶加入會員。`;
@@ -84,6 +99,84 @@ const searchMember = async () => {
         message.value = '查詢時發生網路錯誤。';
     }
 };
+
+// ✅ 新增：開啟編輯
+const startEditBasicInfo = () => {
+    if (!searchResult.value) return;
+    isEditingMember.value = true;
+    editName.value = searchResult.value.name || '';
+    editPhone.value = searchResult.value.phone || '';
+    editNote.value = searchResult.value.note  || '';
+};
+
+// ✅ 新增：取消編輯
+const cancelEditBasicInfo = () => {
+    if (!searchResult.value) return;
+    isEditingMember.value = false;
+    editName.value = searchResult.value.name || '';
+    editPhone.value = searchResult.value.phone || '';
+    editNote.value = searchResult.value.note  || '';
+};
+
+// ✅ 新增：儲存（先不打 API，只更新畫面）
+const saveBasicMemberInfo = async () => {
+    if (!searchResult.value) return;
+
+    if (!editName.value || !editPhone.value) {
+        message.value = '⚠️ 姓名與電話不可為空';
+        return;
+    }
+
+    if (!confirm('確定要更新會員資料嗎？')) return;
+
+    const token = localStorage.getItem('admin_token');
+
+    try {
+        const response = await fetch(
+            `${API_BASE_URL}/api.php?action=admin_update_member_full`,
+            {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${token}`,
+                },
+                body: JSON.stringify({
+                    member_id: searchResult.value.id,
+                    name: editName.value,
+                    phone: editPhone.value,
+                    note: editNote.value,
+
+                    // 🔑 admin_update_member_full 必要欄位
+                    remaining_quota: searchResult.value.remaining_quota,
+                    associated_product_id: searchResult.value.associated_product_id,
+                    join_date: searchResult.value.join_date,
+                })
+            }
+        );
+
+        const data = await response.json();
+
+        if (data.status === 'success') {
+            searchResult.value.name = editName.value;
+            searchResult.value.phone = editPhone.value;
+            searchResult.value.note = editNote.value;
+
+            isEditingMember.value = false;
+            message.value = '✅ 會員資料（含備註）已更新';
+        } else {
+            message.value = `❌ 更新失敗：${data.message}`;
+        }
+
+    } catch (error) {
+        message.value = '❌ 網路錯誤，更新失敗';
+    }
+
+    setTimeout(() => {
+        message.value = '';
+    }, 6000);
+};
+
+
 
 // ----------------------------------------------------
 // C. 會員扣次 (服務完成)
@@ -102,18 +195,14 @@ const deductQuota = async () => {
         return;
     }
 
-    // 呼叫 record_transaction API 進行扣次
     const payload = {
         customer_type: 'MEMBER',
         member_id: searchResult.value.id,
-        // 會員額度關聯的 product_id，用於記錄交易類型
         product_id: searchResult.value.associated_product_id, 
         operator: operator.value,
-        // amount_paid=0, quota_deducted=1，後端會處理
     };
 
     try {
-        // 🚀 修正 4: 修正 deductQuota 的 API 呼叫路徑
         const response = await fetch(`${API_BASE_URL}/api.php?action=record_transaction`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -123,7 +212,6 @@ const deductQuota = async () => {
 
         if (data.status === 'success') {
             message.value = `✅ 會員 ${searchResult.value.name} 服務完成，已扣除 1 次額度！`;
-            // 重新查詢更新餘額
             searchMember(); 
         } else {
             message.value = `❌ 扣次失敗：${data.message}`;
@@ -153,7 +241,6 @@ const handleRenew = async () => {
     };
 
     try {
-        // 🚀 修正 5: 修正 handleRenew 的 API 呼叫路徑
         const response = await fetch(`${API_BASE_URL}/api.php?action=renew_member`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -163,7 +250,6 @@ const handleRenew = async () => {
 
         if (data.status === 'success') {
             message.value = `✅ ${data.message}`;
-            // 續約成功後，重新查詢以更新餘額顯示
             searchMember(); 
         } else {
             message.value = `❌ 續約失敗：${data.message}`;
@@ -178,10 +264,10 @@ const handleRenew = async () => {
 // E. 前端導航控制 (Router 跳轉)
 // ----------------------------------------------------
 const goToRegistration = () => {
-    router.push('/register'); // 跳轉到會員註冊頁
+    router.push('/register');
 };
 const goToAdminDashboard = () => {
-    router.push('/admin'); // 跳轉到後台管理頁
+    router.push('/admin');
 };
 </script>
 
@@ -221,15 +307,38 @@ const goToAdminDashboard = () => {
                 <input 
                     type="text" 
                     v-model="searchQuery" 
-                    placeholder="輸入會員電話"
+                    placeholder="輸入會員姓名或電話"
                     @keyup.enter="searchMember"
                 >
                 <button @click="searchMember" class="btn search-btn">查詢會員資料</button>
             </div>
 
             <div v-if="searchResult" class="result-box success">
-                <h3>會員資訊：{{ searchResult.name }}</h3>
-                <p>📞 {{ searchResult.phone }}</p>
+                <!-- ✅ 保留你原本的呈現，但在同位置加上可切換編輯 -->
+                <h3>
+                    會員資訊：
+                    <template v-if="!isEditingMember">{{ searchResult.name }}</template>
+                    <template v-else>
+                        <input
+                            type="text"
+                            v-model="editName"
+                            style="padding:6px; border:1px solid #ccc; border-radius:4px; margin-left:6px;"
+                        />
+                    </template>
+                </h3>
+
+                <p>
+                    📞
+                    <template v-if="!isEditingMember">{{ searchResult.phone }}</template>
+                    <template v-else>
+                        <input
+                            type="text"
+                            v-model="editPhone"
+                            style="padding:6px; border:1px solid #ccc; border-radius:4px; margin-left:6px;"
+                        />
+                    </template>
+                </p>
+
                 <p>📌 方案類型：{{ searchResult.service_name }}</p>
                 
                 <p class="quota-display">
@@ -238,6 +347,40 @@ const goToAdminDashboard = () => {
                         {{ searchResult.remaining_quota }} 次
                     </span>
                 </p>
+                <p>📝 備註：
+                   <span v-if="!isEditingMember">{{ searchResult.note || '—' }}</span>
+                   <textarea v-else v-model="editNote" rows="2"></textarea>
+                </p>
+
+                <!-- ✅ 新增：只在這裡加按鈕，不改你原 UI 版面 -->
+                <div style="display:flex; gap:10px; margin: 10px 0;">
+                    <button
+                        v-if="!isEditingMember"
+                        class="btn"
+                        style="background-color:#6f42c1;"
+                        @click="startEditBasicInfo"
+                    >
+                        ✏️ 修改姓名 / 電話
+                    </button>
+
+                    <button
+                        v-if="isEditingMember"
+                        class="btn"
+                        style="background-color:#28a745;"
+                        @click="saveBasicMemberInfo"
+                    >
+                        💾 儲存
+                    </button>
+
+                    <button
+                        v-if="isEditingMember"
+                        class="btn"
+                        style="background-color:#adb5bd; color:#333;"
+                        @click="cancelEditBasicInfo"
+                    >
+                        取消
+                    </button>
+                </div>
                 
                 <button 
                     @click="deductQuota" 
