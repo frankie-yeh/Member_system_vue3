@@ -12,7 +12,7 @@ const searchResult = ref(null);
 const message = ref('');
 const operator = ref('Admin'); 
 
-// ✅ 新增：會員資料編輯用（只限姓名 / 電話）
+//  新增：會員資料（只限姓名 / 電話）
 const isEditingMember = ref(false);
 const editName = ref('');
 const editPhone = ref('');
@@ -65,9 +65,9 @@ const handleNonMemberTransaction = async (productId, price, serviceName) => {
 // ----------------------------------------------------
 const searchMember = async () => {
     message.value = '';
-    searchResult.value = null; // 清空上次結果
+    searchResult.value = null; 
 
-    // ✅ 查詢前先關掉編輯模式
+    //  查詢前先關掉編輯模式
     isEditingMember.value = false;
     editName.value = '';
     editPhone.value = '';
@@ -85,7 +85,7 @@ const searchMember = async () => {
         if (data.data) {
             searchResult.value = data.data;
 
-            // ✅ 新增：把姓名/電話帶入編輯欄位（只做前端）
+            //  新增：把姓名/電話帶入編輯欄位
             editName.value = data.data.name || '';
             editPhone.value = data.data.phone || '';
             editNote.value = data.data.note  || '';
@@ -100,7 +100,7 @@ const searchMember = async () => {
     }
 };
 
-// ✅ 新增：開啟編輯
+//  新增：開啟編輯
 const startEditBasicInfo = () => {
     if (!searchResult.value) return;
     isEditingMember.value = true;
@@ -109,7 +109,7 @@ const startEditBasicInfo = () => {
     editNote.value = searchResult.value.note  || '';
 };
 
-// ✅ 新增：取消編輯
+//  新增：取消編輯
 const cancelEditBasicInfo = () => {
     if (!searchResult.value) return;
     isEditingMember.value = false;
@@ -118,7 +118,7 @@ const cancelEditBasicInfo = () => {
     editNote.value = searchResult.value.note  || '';
 };
 
-// ✅ 新增：儲存（先不打 API，只更新畫面）
+//  新增：儲存
 const saveBasicMemberInfo = async () => {
     if (!searchResult.value) return;
 
@@ -146,7 +146,7 @@ const saveBasicMemberInfo = async () => {
                     phone: editPhone.value,
                     note: editNote.value,
 
-                    // 🔑 admin_update_member_full 必要欄位
+                    //  admin_update_member_full 必要欄位
                     remaining_quota: searchResult.value.remaining_quota,
                     associated_product_id: searchResult.value.associated_product_id,
                     join_date: searchResult.value.join_date,
@@ -314,7 +314,6 @@ const goToAdminDashboard = () => {
             </div>
 
             <div v-if="searchResult" class="result-box success">
-                <!-- ✅ 保留你原本的呈現，但在同位置加上可切換編輯 -->
                 <h3>
                     會員資訊：
                     <template v-if="!isEditingMember">{{ searchResult.name }}</template>
@@ -352,7 +351,6 @@ const goToAdminDashboard = () => {
                    <textarea v-else v-model="editNote" rows="2"></textarea>
                 </p>
 
-                <!-- ✅ 新增：只在這裡加按鈕，不改你原 UI 版面 -->
                 <div style="display:flex; gap:10px; margin: 10px 0;">
                     <button
                         v-if="!isEditingMember"
@@ -472,3 +470,4 @@ hr { border: 0; border-top: 1px solid #ddd; margin: 30px 0; }
 .admin-link-section { text-align: center; }
 .admin-btn { background-color: #6c757d; width: 100%; padding: 15px; font-size: 1.1em; }
 </style>
+
