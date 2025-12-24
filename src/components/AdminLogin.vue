@@ -30,11 +30,15 @@ const username = ref('');
 const password = ref('');
 const loading = ref(false);
 const errorMessage = ref('');
+
+// 確保與您在 api.php 中的基礎 URL 匹配
 const API_BASE_URL = 'https://yamay.com.tw/app'; 
 
 const handleLogin = async () => {
   loading.value = true;
   errorMessage.value = '';
+
+  // 將資料轉換為 URL 編碼格式，適用於 PHP 的 $_POST
   const formData = new URLSearchParams();
   formData.append('username', username.value);
   formData.append('password', password.value);
@@ -55,11 +59,11 @@ const handleLogin = async () => {
       // 1. 儲存權杖到本地儲存
       localStorage.setItem('admin_token', data.token);
       
-      // 2. 回到到管理員頁面
+      // 2. 導航到管理員頁面 (例如 /admin)
       router.push('/admin');
 
     } else {
-      // 登入失敗  401 錯誤
+      // 登入失敗 (例如 401 錯誤)
       errorMessage.value = data.message || '登入失敗，請檢查帳號和密碼。';
     }
 
@@ -73,6 +77,7 @@ const handleLogin = async () => {
 </script>
 
 <style scoped>
+/* 簡單的樣式，您可以根據您的應用程式設計調整 */
 .admin-login-container {
   max-width: 400px;
   margin: 50px auto;
@@ -121,5 +126,4 @@ button:disabled {
   color: red;
   margin-top: 10px;
 }
-
 </style>

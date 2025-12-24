@@ -25,6 +25,7 @@ function validateTokenAndExit($pdo) {
         $token = $m[1];
     }
 
+    // 2️⃣ 再吃 GET / POST token（給 CSV / window.open 用）
     if (!$token) {
         $token = $_POST['token'] ?? $_GET['token'] ?? '';
     }
@@ -94,6 +95,8 @@ switch ($action) {
     case 'import_members_csv':    handleImportMembersCSV($pdo); break;
     case 'update_member_basic':   handleUpdateMemberBasic($pdo); break;
     case 'admin_update_member_full': handleAdminUpdateMemberFull($pdo); break;
+    case 'admin_delete_member': handleDeleteMember($pdo); break;
+
 
     default:
         echo json_encode(['status'=>'error','message'=>'無效 action']);
@@ -119,31 +122,56 @@ function handleRegisterMember($pdo) {
     $phone      = trim($data['phone']);
     $product_id = (int)$data['associated_product_id']; 
     $operator   = $data['operator'];
+    $note       = $data['note'] ?? null;
 
-    // 是否加入當天就先使用 1 次（true/1 表示要扣一次）
+    // 是否加入當天就先使用 1 次
     $use_immediately = !empty($data['useImmediately']) || !empty($data['use_immediately']);
 
     try {
         $pdo->beginTransaction();
         
-        // 檢查電話是否已存在
-        $stmt_check = $pdo->prepare("SELECT id FROM members WHERE phone = ?");
+        // --- 修改後的檢查邏輯 ---
+        // 檢查電話是否已存在，同時抓取 id 和 is_deleted 狀態
+        $stmt_check = $pdo->prepare("SELECT id, is_deleted FROM members WHERE phone = ? LIMIT 1");
         $stmt_check->execute([$phone]);
-        if ($stmt_check->fetch()) { 
-            throw new Exception("該電話號碼已存在，請使用續約功能。"); 
+        $existing_member = $stmt_check->fetch(PDO::FETCH_ASSOC);
+
+        $member_id = null;
+        $is_recovering = false;
+
+        if ($existing_member) {
+            if ($existing_member['is_deleted'] == 0) {
+                // 如果會員還活著，才報錯
+                throw new Exception("該電話號碼已存在，請使用續約功能。"); 
+            } else {
+                // 如果會員是被刪除的，將其復活 (is_deleted 設回 0)
+                $is_recovering = true;
+                $member_id = (int)$existing_member['id'];
+                
+                $sql_recover = "
+                    UPDATE members 
+                    SET name = ?, note = ?, associated_product_id = ?, 
+                        remaining_quota = 10, is_deleted = 0, join_date = NOW() 
+                    WHERE id = ?
+                ";
+                $stmt_recover = $pdo->prepare($sql_recover);
+                $stmt_recover->execute([$name, $note, $product_id, $member_id]);
+            }
         }
 
-        // 1) 寫入 members（先給 10 次）
-        $note = $data['note'] ?? null;
-        $sql_member = "
-            INSERT INTO members (name, phone, note, associated_product_id, remaining_quota, join_date) 
-            VALUES (?, ?, ?, ?, 10, NOW())
-        ";
-        $stmt_member = $pdo->prepare($sql_member);
-        $stmt_member->execute([$name, $phone, $note, $product_id]);
-        $member_id = (int)$pdo->lastInsertId();
+        // 如果不是復活舊帳號，才執行新增 INSERT
+        if (!$is_recovering) {
+            $sql_member = "
+                INSERT INTO members (name, phone, note, associated_product_id, remaining_quota, join_date, is_deleted) 
+                VALUES (?, ?, ?, ?, 10, NOW(), 0)
+            ";
+            $stmt_member = $pdo->prepare($sql_member);
+            $stmt_member->execute([$name, $phone, $note, $product_id]);
+            $member_id = (int)$pdo->lastInsertId();
+        }
+        // --- 檢查邏輯結束 ---
 
-        // 2) 寫入 member_fees（收 3000，付款日 = NOW）
+        // 2) 寫入 member_fees（不論是新加還是復活，都要收錢）
         $sql_fee = "
             INSERT INTO member_fees (member_id, fee_amount, payment_date, operator) 
             VALUES (?, 3000.00, NOW(), ?)
@@ -153,6 +181,7 @@ function handleRegisterMember($pdo) {
 
         // 3) 如果「加入當下就要用 1 次」
         if ($use_immediately) {
+            // 3-1 扣次（10 -> 9）
             $sql_update_quota = "
                 UPDATE members 
                 SET remaining_quota = remaining_quota - 1 
@@ -161,7 +190,7 @@ function handleRegisterMember($pdo) {
             $stmt_update = $pdo->prepare($sql_update_quota);
             $stmt_update->execute([$member_id]);
 
-            // 3-2 寫入一筆會員服務交易紀錄（0 元、扣 1 次）
+            // 3-2 寫入一筆會員服務交易紀錄
             $sql_tx = "
                 INSERT INTO transactions 
                     (customer_type, member_id, product_id, amount_paid, quota_deducted, operator, transaction_date)
@@ -173,16 +202,20 @@ function handleRegisterMember($pdo) {
         }
 
         $pdo->commit();
+
+        $success_msg = $is_recovering ? '舊會員資料已成功恢復並重置額度。' : '新會員註冊成功！';
+        if ($use_immediately) $success_msg .= ' 並已使用 1 次。';
+
         echo json_encode([
             'status' => 'success', 
-            'message' => $use_immediately 
-                ? '新會員註冊成功並已使用 1 次。' 
-                : '新會員註冊成功！',
+            'message' => $success_msg,
             'member_id' => $member_id
         ]);
 
     } catch (Exception $e) {
-        $pdo->rollBack();
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
         http_response_code(500);
         echo json_encode(['status' => 'error', 'message' => '註冊失敗: ' . $e->getMessage()]);
     }
@@ -200,6 +233,7 @@ function handleSearchMember($pdo) {
         return;
     }
 
+    // ① 先用「電話」精準查
     $stmt = $pdo->prepare("
         SELECT 
             m.id,
@@ -212,12 +246,14 @@ function handleSearchMember($pdo) {
             p.name AS service_name
         FROM members m
         JOIN products p ON m.associated_product_id = p.id
-        WHERE m.phone = :phone
-        LIMIT 1
+        WHERE m.is_deleted = 0
+          AND m.phone = :phone
+          LIMIT 1
     ");
     $stmt->execute(['phone' => $query]);
     $row = $stmt->fetch(PDO::FETCH_ASSOC);
 
+    // ② 如果電話找不到，才用 name LIKE
     if (!$row) {
         $stmt = $pdo->prepare("
             SELECT 
@@ -231,7 +267,8 @@ function handleSearchMember($pdo) {
                 p.name AS service_name
             FROM members m
             JOIN products p ON m.associated_product_id = p.id
-            WHERE m.name LIKE :name
+            WHERE m.is_deleted = 0
+              AND m.name LIKE :name
             ORDER BY m.join_date DESC
             LIMIT 1
         ");
@@ -362,12 +399,13 @@ function handleRenewMember($pdo) {
 ============================================================ */
 function handleGetRevenue($pdo, $type) {
 
+    // ✅ 一定要先拿 date
     $date = $_GET['date'] ?? date('Y-m-d');
 
     $isDaily = ($type === 'day');
     $period  = $isDaily ? $date : substr($date, 0, 7);
 
-    // 明確定義時間區間（台北）
+    // ✅ 明確定義時間區間（台北）
     if ($isDaily) {
         $start = $date . ' 00:00:00';
         $end   = $date . ' 23:59:59';
@@ -464,7 +502,7 @@ function handleGetRevenue($pdo, $type) {
                     'new_member_count' => $new_member_count,
                     'total_visitors' => $total_visitors
                 ],
-                // debug 用（可之後移除）
+                // 🔍 debug 用（可之後移除）
                 'debug_range' => [
                     'start' => $start,
                     'end'   => $end
@@ -611,8 +649,9 @@ function handleGetMembersByJoinDate($pdo) {
                     p.name AS service_name
                 FROM members m
                 JOIN products p ON m.associated_product_id = p.id
-                WHERE DATE(m.join_date) = :date
-                ORDER BY m.join_date DESC
+                WHERE m.is_deleted = 0
+      AND DATE(m.join_date) = :date
+    ORDER BY m.join_date DESC
             ";
             $stmt = $pdo->prepare($sql);
             $stmt->execute(['date' => $date]);
@@ -631,8 +670,9 @@ function handleGetMembersByJoinDate($pdo) {
                     p.name AS service_name
                 FROM members m
                 JOIN products p ON m.associated_product_id = p.id
-                WHERE DATE_FORMAT(m.join_date, '%Y-%m') = :month
-                ORDER BY m.join_date DESC
+                WHERE m.is_deleted = 0
+  AND DATE_FORMAT(m.join_date, '%Y-%m') = :month
+ORDER BY m.join_date DESC
             ";
             $stmt = $pdo->prepare($sql);
             $stmt->execute(['month' => $month]);
@@ -668,6 +708,7 @@ function handleExportMembersCSV($pdo) {
         exit;
     }
 
+    // ✅ 修正：匯出欄位順序要和 header 一致，避免 note 亂欄
     $stmt = $pdo->prepare("
         SELECT 
             m.name,
@@ -682,7 +723,6 @@ function handleExportMembersCSV($pdo) {
     ");
     $stmt->execute([$date]);
     $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
 
     header('Content-Type: text/csv; charset=UTF-8');
     header('Content-Disposition: attachment; filename="members_' . $date . '.csv"');
@@ -736,7 +776,7 @@ function handleImportMembersCSV($pdo) {
     }
 
     $header = array_map(function ($h) {
-        $h = preg_replace('/^\xEF\xBB\xBF/', '', $h); 
+        $h = preg_replace('/^\xEF\xBB\xBF/', '', $h);
         return trim($h);
     }, $header);
 
@@ -754,6 +794,7 @@ function handleImportMembersCSV($pdo) {
         ========================================================= */
         while (($row = fgetcsv($handle)) !== false) {
             $rowIndex++;
+
             if (count($row) !== count($header)) {
                 $errors[] = [
                     'row' => $rowIndex,
@@ -786,7 +827,6 @@ function handleImportMembersCSV($pdo) {
             $memberId = $stmt->fetchColumn();
 
             if ($memberId) {
-                // UPDATE
                 $pdo->prepare("
                     UPDATE members SET
                         name = ?,
@@ -806,7 +846,6 @@ function handleImportMembersCSV($pdo) {
                 $updated++;
 
             } else {
-                //  INSERT
                 $pdo->prepare("
                     INSERT INTO members
                         (name, phone, note, remaining_quota, associated_product_id, join_date)
@@ -868,7 +907,7 @@ function handleUpdateMemberBasic($pdo) {
     $phone    = trim($data['phone']);
 
     try {
-        // 檢查電話是否被其他會員使用
+        // 🔒 檢查電話是否被其他會員使用
         $stmt = $pdo->prepare("
             SELECT id 
             FROM members 
@@ -884,7 +923,7 @@ function handleUpdateMemberBasic($pdo) {
             return;
         }
 
-        //  更新會員基本資料
+        // ✅ 更新會員基本資料
         $stmt = $pdo->prepare("
             UPDATE members
             SET name = ?, phone = ?
@@ -911,10 +950,12 @@ function handleUpdateMemberBasic($pdo) {
 ============================================================ */
 function handleAdminUpdateMemberFull($pdo) {
 
-    //  管理員驗證
+    // ✅ 管理員驗證
     validateTokenAndExit($pdo);
 
     $data = json_decode(file_get_contents('php://input'), true);
+
+    // ✅ 你目前 required 沒有 note，這沒問題（可選）
     $required = ['member_id','name','phone','remaining_quota','associated_product_id','join_date'];
     foreach ($required as $key) {
         if (!isset($data[$key])) {
@@ -932,11 +973,11 @@ function handleAdminUpdateMemberFull($pdo) {
     $phone      = trim($data['phone']);
     $quota      = (int)$data['remaining_quota'];
     $productId  = (int)$data['associated_product_id'];
-    $joinDate   = $data['join_date'];
+    $joinDate   = $data['join_date']; 
     $note       = $data['note'] ?? null; 
 
     try {
-        //  電話唯一性檢查
+        // 🔒 電話唯一性檢查
         $stmt = $pdo->prepare("
             SELECT id FROM members
             WHERE phone = ? AND id != ?
@@ -951,7 +992,7 @@ function handleAdminUpdateMemberFull($pdo) {
             return;
         }
 
-        //  更新會員
+        // ✅ 更新會員（含 note）
         $stmt = $pdo->prepare("
             UPDATE members SET
                 name = ?,
@@ -986,5 +1027,46 @@ function handleAdminUpdateMemberFull($pdo) {
     }
 }
 
-?>
+/* ============================================================
+   P. 刪除會員
+============================================================ */
+function handleDeleteMember($pdo) {
 
+    $data = json_decode(file_get_contents('php://input'), true);
+
+    if (empty($data['member_id'])) {
+        http_response_code(400);
+        echo json_encode([
+            'status' => 'error',
+            'message' => '缺少 member_id'
+        ]);
+        return;
+    }
+
+    $memberId = (int)$data['member_id'];
+
+    try {
+        $stmt = $pdo->prepare("
+            UPDATE members 
+            SET is_deleted = 1 
+            WHERE id = ?
+        ");
+        $stmt->execute([$memberId]);
+
+        echo json_encode([
+            'status' => 'success',
+            'message' => '會員已刪除'
+        ]);
+
+    } catch (Exception $e) {
+        http_response_code(500);
+        echo json_encode([
+            'status' => 'error',
+            'message' => '刪除失敗：' . $e->getMessage()
+        ]);
+    }
+}
+
+
+
+?>

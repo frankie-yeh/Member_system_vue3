@@ -365,5 +365,4 @@ h1 { color: #333; border-bottom: 2px solid #eee; padding-bottom: 10px; margin-bo
 .stat-card.new h3 {
     color: white;
 }
-
 </style>

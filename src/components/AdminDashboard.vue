@@ -12,23 +12,25 @@ const goMembersByDate = () => {
 
 const handleLogout = async () => {
     const token = localStorage.getItem('admin_token');
-    localStorage.removeItem('admin_token'); 
+    localStorage.removeItem('admin_token'); // 立即清除本地權杖
 
     if (token) {
+        // 可選：呼叫後端 API 銷毀權杖（更安全）
         try {
             const API_BASE_URL = '/app'; 
             await fetch(`${API_BASE_URL}/api.php?action=admin_logout`, {
                 method: 'POST',
                 headers: {
-                    'Authorization': `Bearer ${token}` 
+                    'Authorization': `Bearer ${token}` // 傳送要銷毀的權杖
                 }
             });
+            // 伺服器端錯誤通常不影響登出流程，所以我們不處理回應
         } catch (e) {
             console.error('Logout API call failed, but local token cleared.', e);
         }
     }
     
-    // 回到首頁總控台
+    // 導航到員工可存取的首頁 (例如總控台)
     router.push('/');
 };
 
@@ -159,6 +161,7 @@ const goToTracker = () => {
     router.push('/');
 };
 
+// 組件加載時自動獲取數據
 onMounted(() => {
     fetchAllMembers();
     fetchAllTransactions();
@@ -265,7 +268,7 @@ onMounted(() => {
 </template>
 
 <style scoped>
-/* 基本樣式 */
+/* 基礎樣式 */
 .card {
     background-color: white;
     padding: 30px;
@@ -293,7 +296,7 @@ h1 { color: #333; border-bottom: 2px solid #eee; padding-bottom: 10px; margin-bo
 .report-btn { background-color: #007bff; }
 .back-btn { background-color: #6c757d; }
 
-/* data區 */
+/* 數據區塊 */
 .section h2 { margin-top: 0; color: #555; }
 .table-scroll { max-height: 500px; overflow-y: auto; margin-top: 15px; }
 
@@ -311,7 +314,7 @@ th, td {
 th {
     background-color: #f8f9fa;
     color: #333;
-    position: sticky; 
+    position: sticky; /* 固定表頭 */
     top: 0;
 }
 tbody tr:hover { background-color: #f1f1f1; }
@@ -358,6 +361,5 @@ tbody tr:hover { background-color: #f1f1f1; }
 .admin-card:hover {
     background: #e9ecef;
 }
-
 
 </style>

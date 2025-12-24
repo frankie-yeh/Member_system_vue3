@@ -12,7 +12,7 @@ const searchResult = ref(null);
 const message = ref('');
 const operator = ref('Admin'); 
 
-//  新增：會員資料（只限姓名 / 電話）
+// ✅ 新增：會員資料編輯用（只限姓名 / 電話）
 const isEditingMember = ref(false);
 const editName = ref('');
 const editPhone = ref('');
@@ -65,9 +65,9 @@ const handleNonMemberTransaction = async (productId, price, serviceName) => {
 // ----------------------------------------------------
 const searchMember = async () => {
     message.value = '';
-    searchResult.value = null; 
+    searchResult.value = null; // 清空上次結果
 
-    //  查詢前先關掉編輯模式
+    // ✅ 查詢前先關掉編輯模式
     isEditingMember.value = false;
     editName.value = '';
     editPhone.value = '';
@@ -85,7 +85,7 @@ const searchMember = async () => {
         if (data.data) {
             searchResult.value = data.data;
 
-            //  新增：把姓名/電話帶入編輯欄位
+            // ✅ 新增：把姓名/電話帶入編輯欄位（只做前端）
             editName.value = data.data.name || '';
             editPhone.value = data.data.phone || '';
             editNote.value = data.data.note  || '';
@@ -100,7 +100,7 @@ const searchMember = async () => {
     }
 };
 
-//  新增：開啟編輯
+// ✅ 新增：開啟編輯
 const startEditBasicInfo = () => {
     if (!searchResult.value) return;
     isEditingMember.value = true;
@@ -109,7 +109,7 @@ const startEditBasicInfo = () => {
     editNote.value = searchResult.value.note  || '';
 };
 
-//  新增：取消編輯
+// ✅ 新增：取消編輯
 const cancelEditBasicInfo = () => {
     if (!searchResult.value) return;
     isEditingMember.value = false;
@@ -118,7 +118,7 @@ const cancelEditBasicInfo = () => {
     editNote.value = searchResult.value.note  || '';
 };
 
-//  新增：儲存
+// ✅ 新增：儲存（先不打 API，只更新畫面）
 const saveBasicMemberInfo = async () => {
     if (!searchResult.value) return;
 
@@ -146,7 +146,7 @@ const saveBasicMemberInfo = async () => {
                     phone: editPhone.value,
                     note: editNote.value,
 
-                    //  admin_update_member_full 必要欄位
+                    // 🔑 admin_update_member_full 必要欄位
                     remaining_quota: searchResult.value.remaining_quota,
                     associated_product_id: searchResult.value.associated_product_id,
                     join_date: searchResult.value.join_date,
@@ -176,12 +176,66 @@ const saveBasicMemberInfo = async () => {
     }, 6000);
 };
 
+// ----------------------------------------------------
+// ❌ 刪除會員（軟刪除 is_deleted = 1）
+// ----------------------------------------------------
+const deleteMember = async () => {
+    if (!searchResult.value) return;
+
+    if (!confirm(`⚠️ 確定要刪除會員「${searchResult.value.name}」嗎？\n此操作不會刪除交易紀錄，但會員將無法再被查詢。`)) {
+        return;
+    }
+
+    const token = localStorage.getItem('admin_token');
+
+    try {
+        const response = await fetch(
+            `${API_BASE_URL}/api.php?action=admin_delete_member`,
+            {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${token}`,
+                },
+                body: JSON.stringify({
+                    member_id: searchResult.value.id
+                })
+            }
+        );
+
+        const data = await response.json();
+
+        if (data.status === 'success') {
+            message.value = '🗑️ 會員已刪除';
+
+            // ✅ 清空畫面狀態
+            searchResult.value = null;
+            searchQuery.value = '';
+            isEditingMember.value = false;
+            editName.value = '';
+            editPhone.value = '';
+            editNote.value = '';
+
+        } else {
+            message.value = `❌ 刪除失敗：${data.message}`;
+        }
+
+    } catch (error) {
+        message.value = '❌ 網路錯誤，刪除失敗';
+    }
+
+    setTimeout(() => {
+        message.value = '';
+    }, 6000);
+};
+
+       
 
 
 // ----------------------------------------------------
 // C. 會員扣次 (服務完成)
 // ----------------------------------------------------
-const deductQuota = async () => {
+async function deductQuota() {
     if (!searchResult.value || searchResult.value.remaining_quota < 1) {
         message.value = '⚠️ 額度不足或未查詢到會員。';
         return;
@@ -198,7 +252,7 @@ const deductQuota = async () => {
     const payload = {
         customer_type: 'MEMBER',
         member_id: searchResult.value.id,
-        product_id: searchResult.value.associated_product_id, 
+        product_id: searchResult.value.associated_product_id,
         operator: operator.value,
     };
 
@@ -212,7 +266,7 @@ const deductQuota = async () => {
 
         if (data.status === 'success') {
             message.value = `✅ 會員 ${searchResult.value.name} 服務完成，已扣除 1 次額度！`;
-            searchMember(); 
+            searchMember();
         } else {
             message.value = `❌ 扣次失敗：${data.message}`;
         }
@@ -220,7 +274,7 @@ const deductQuota = async () => {
         message.value = '網路錯誤，扣次失敗。';
     }
     setTimeout(() => { message.value = ''; }, 8000);
-};
+}
 
 // ----------------------------------------------------
 // D. 會員續約/重新儲值 ($3000)
@@ -378,6 +432,14 @@ const goToAdminDashboard = () => {
                     >
                         取消
                     </button>
+                    <button
+                        v-if="isEditingMember"
+                        class="btn"
+                        style="background-color:#dc3545; color:#333;"
+                        @click="deleteMember"
+                    >
+                        🗑 刪除
+                    </button>
                 </div>
                 
                 <button 
@@ -470,4 +532,3 @@ hr { border: 0; border-top: 1px solid #ddd; margin: 30px 0; }
 .admin-link-section { text-align: center; }
 .admin-btn { background-color: #6c757d; width: 100%; padding: 15px; font-size: 1.1em; }
 </style>
-

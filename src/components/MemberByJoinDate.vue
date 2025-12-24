@@ -11,7 +11,7 @@ const router = useRouter()
 /* =========================
    狀態
 ========================= */
-const queryMode = ref('day') 
+const queryMode = ref('day') // day | month
 const queryDate = ref(new Date().toISOString().substring(0, 10))
 const members = ref([])
 const loading = ref(false)
@@ -156,6 +156,46 @@ const startEdit = (m) => {
 const cancelEdit = () => {
     editingId.value = null
 }
+/* =========================
+   刪除會員（軟刪除）
+========================= */
+const deleteMember = async (m) => {
+    if (!confirm(`⚠️ 確定要刪除會員「${m.name}」嗎？\n刪除後將無法再被查詢，但交易紀錄會保留。`)) {
+        return;
+    }
+
+    const token = localStorage.getItem('admin_token');
+
+    try {
+        const res = await fetch(
+            `${API_BASE_URL}/api.php?action=admin_delete_member`,
+            {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${token}`,
+                },
+                body: JSON.stringify({
+                    member_id: m.id
+                })
+            }
+        );
+
+        const data = await res.json();
+
+        if (data.status === 'success') {
+            // ✅ 直接從畫面移除該筆
+            members.value = members.value.filter(item => item.id !== m.id);
+            message.value = '🗑️ 會員已刪除';
+        } else {
+            alert(data.message);
+        }
+
+    } catch (err) {
+        console.error(err);
+        alert('❌ 刪除失敗，請稍後再試');
+    }
+};
 
 const saveEdit = async (m) => {
     const token = localStorage.getItem('admin_token')
@@ -186,6 +226,11 @@ const saveEdit = async (m) => {
         alert(data.message)
     }
 }
+
+
+
+
+
 
 /* =========================
    導航
@@ -224,7 +269,7 @@ const goBack = () => router.push('/admin')
         <input
             type="text"
             v-model="searchQuery"
-            placeholder="輸入會員電話"
+            placeholder="輸入會員姓名或電話"
             @keyup.enter="searchMember"
         />
         <button class="btn query" @click="searchMember">🔍 查詢會員</button>
@@ -276,6 +321,9 @@ const goBack = () => router.push('/admin')
                     </button>
                     <button v-if="editingId === m.id" class="btn query" @click="saveEdit(m)">
                         💾 儲存
+                    </button>
+                    <button v-if="editingId === m.id" class="btn del" @click="deleteMember(m)">
+                        🗑 刪除
                     </button>
                     <button v-if="editingId === m.id" class="btn back" @click="cancelEdit">
                         取消
@@ -337,8 +385,8 @@ input[type="date"] {
 
 
 .btn {
-    padding: 10px 15px;
-    margin: 5px;
+    padding: 5px 5px;
+    margin: 2px;
     border: none;
     border-radius: 6px;
     cursor: pointer;
@@ -351,6 +399,11 @@ input[type="date"] {
 
 .btn.back {
     background: #6c757d;
+    margin-bottom: 15px;
+}
+
+.btn.del {
+    background: #eb1111;
     margin-bottom: 15px;
 }
 
@@ -406,4 +459,3 @@ background-color: darkgreen;
     text-align: center;
 }
 </style>
-
